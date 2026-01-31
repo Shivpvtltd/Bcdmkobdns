@@ -1,0 +1,172 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ==================== Helper Functions ====================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    // ==================== Validation Functions ====================
+    
+    function isValidAppData() {
+      return request.resource.data.appName is string &&
+             request.resource.data.appName.size() >= 2 &&
+             request.resource.data.appName.size() <= 100 &&
+             request.resource.data.description is string &&
+             request.resource.data.description.size() >= 50 &&
+             request.resource.data.description.size() <= 1000 &&
+             request.resource.data.category is string &&
+             request.resource.data.category.size() > 0 &&
+             request.resource.data.logoURL is string &&
+             request.resource.data.logoURL.size() > 0 &&
+             request.resource.data.downloadURL is string &&
+             request.resource.data.downloadURL.size() > 0;
+    }
+    
+    function isValidUserData() {
+      return request.resource.data.uid is string &&
+             request.resource.data.name is string &&
+             request.resource.data.email is string &&
+             request.resource.data.role == 'user';
+    }
+    
+    function isValidRatingData() {
+      return request.resource.data.rating is number &&
+             request.resource.data.rating >= 1 &&
+             request.resource.data.rating <= 5 &&
+             request.resource.data.appId is string &&
+             request.resource.data.userId == request.auth.uid;
+    }
+    
+    // ==================== Users Collection ====================
+    
+    match /users/{userId} {
+      // Allow read if authenticated and is owner or admin
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      
+      // Allow create on first sign in - only if uid matches and role is 'user'
+      allow create: if isOwner(userId) && 
+                       isValidUserData() &&
+                       request.resource.data.createdAt == request.time;
+      
+      // Allow update only for own profile, cannot change role
+      allow update: if isOwner(userId) && 
+                       request.resource.data.role == resource.data.role;
+      
+      // Only admin can delete users
+      allow delete: if isAdmin();
+    }
+    
+    // ==================== Apps Collection ====================
+    
+    match /apps/{appId} {
+      // Allow read if:
+      // - App is active (public access)
+      // - Or user is the owner
+      // - Or user is admin
+      allow read: if resource.data.status == 'active' || 
+                     (isAuthenticated() && (request.auth.uid == resource.data.ownerUid || isAdmin()));
+      
+      // Allow create if authenticated and data is valid
+      // Backend will set status to 'draft' and validate all fields
+      allow create: if isAuthenticated() && 
+                       request.resource.data.ownerUid == request.auth.uid &&
+                       request.resource.data.status == 'draft' &&
+                       isValidAppData() &&
+                       request.resource.data.createdAt == request.time;
+      
+      // Allow update if owner or admin
+      // Backend controls status changes
+      allow update: if isAuthenticated() && 
+                       (request.auth.uid == resource.data.ownerUid || isAdmin()) &&
+                       request.resource.data.ownerUid == resource.data.ownerUid;
+      
+      // Allow delete if owner or admin
+      allow delete: if isAuthenticated() && 
+                       (request.auth.uid == resource.data.ownerUid || isAdmin());
+    }
+    
+    // ==================== Ratings Collection ====================
+    
+    match /ratings/{ratingId} {
+      // Allow read for all authenticated users
+      allow read: if isAuthenticated();
+      
+      // Allow create if authenticated and valid rating data
+      allow create: if isAuthenticated() && 
+                       isValidRatingData() &&
+                       request.resource.data.createdAt == request.time;
+      
+      // Allow update only by the rating owner
+      allow update: if isAuthenticated() && 
+                       request.auth.uid == resource.data.userId &&
+                       request.resource.data.userId == resource.data.userId;
+      
+      // Allow delete only by the rating owner
+      allow delete: if isAuthenticated() && 
+                       request.auth.uid == resource.data.userId;
+    }
+    
+    // ==================== Hero Slides Collection ====================
+    
+    match /heroSlides/{slideId} {
+      // Allow read for all (public slides)
+      allow read: if true;
+      
+      // Only admin can write
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // ==================== Categories Collection ====================
+    
+    match /categories/{categoryId} {
+      // Read-only for all users
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // ==================== Uploads Collection ====================
+    
+    match /uploads/{uploadId} {
+      // Allow read if owner or admin
+      allow read: if isAuthenticated() && 
+                     (resource.data.uploadedBy == request.auth.uid || isAdmin());
+      
+      // Allow create if authenticated
+      allow create: if isAuthenticated() &&
+                       request.resource.data.uploadedBy == request.auth.uid;
+      
+      // Allow delete if owner or admin
+      allow delete: if isAuthenticated() && 
+                       (resource.data.uploadedBy == request.auth.uid || isAdmin());
+    }
+    
+    // ==================== Analytics/Stats ====================
+    
+    match /stats/{statId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // ==================== Default Deny ====================
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

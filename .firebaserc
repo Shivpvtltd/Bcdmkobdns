@@ -1,0 +1,9 @@
+{
+  "projects": {
+    "default": "uplayg-1",
+    "prod": "uplayg-1",
+    "pro": "uplayg-1"
+  },
+  "targets": {},
+  "etags": {}
+}
